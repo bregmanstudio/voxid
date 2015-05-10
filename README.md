@@ -3,7 +3,7 @@ singing voice analysis and detection tools
   
 Usage:  
 	import autotune  
-	autotune_baseline_test() # basic tests on supplied A440/A450_Equal_Major WAV files
+	autotune.baseline_test() # basic tests on supplied A440/A450_Equal_Major WAV files
 	autotune.rms_spectrum_test(song='tainted', tuning_f0=110.) # RMS power of equal-temperament bins for song 'tainted'  
 	autotune.mixture_test(song='tainted', tuning_f0=110.) # apply autotune algorithm to song/vocals wav and mix with song/background.wav  	
 	autotune.predominant_melody_test(song='tained', tuning_f0=110.)  
