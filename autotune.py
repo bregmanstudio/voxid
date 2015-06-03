@@ -17,9 +17,12 @@ from bregman.suite import * # the Bregman audio processing toolkit
 import matplotlib
 from matplotlib.pyplot import *
 from matplotlib.mlab import rms_flat
+from matplotlib.cbook import flatten
+from numpy.linalg import svd
 from numpy import *
 import os, glob
 import scikits.audiolab as audio
+import pickle
 
 try:
 	import voweltimbre as sung
@@ -268,3 +271,107 @@ def predominant_melody_test(song='tainted', tuning_f0=110., channel=0):
 	df1 = median([min(abs(eq_freqs-f)) for f in mel10[where(mel10)]])
 	return {'nontuned_deltas':df0, 'autotuned_deltas':df1}
 
+def eval_gauss(x, mu,sigma2):
+	"""
+	evaluate point x on 1d gaussian with mean mu and variance sigma2
+	"""
+	return 1/sqrt(2*pi*sigma2)*exp(-0.5*(x-mu)/sigma2)
+
+def dB(x):
+	return 20*log10(x)
+
+def calc_precrec(t0w0,t0w1,t1w0,t1w1,null_clf):
+	"""
+	Calculate precision-recall from log likelihoods
+	inputs:
+		t0w0 - log likelihood of null data with null model
+		t0w1 - log likelihood of null data with autotune model
+		t1w0 - log likelihood of autotune data with null model
+		t1w1 - log likelihood of autotune data with autotune model
+	outputs:
+		prec - precision for each retrieved autotune datum
+		rec  - recall for each retrieved autotune datum
+	"""
+	if null_clf:
+		t = argsort(r_[t0w0-t0w1,t1w0-t1w1])[::-1] # TP + FP
+	else:
+		t = argsort(r_[t1w1-t1w0,t0w1-t0w0])[::-1] # TP + FP
+	N = len(t) # count percentiles for 100% precision
+	prec, rec = [], []
+	for i in xrange(N):
+		if sum(t[:i+1]<N/2):
+			prec.append(sum(t[:i+1]<N/2)/float(i+1))
+			rec.append(sum(t[:i+1]<N/2)/float(N/2))
+			if rec[-1]>=1.0-finfo(float).eps:
+				break
+	return prec,rec
+
+def calc_fscore(r,p):
+	"""
+	given recall and precision arrays, calculate the f-measure (f-score)
+	"""
+	a = array(zip(flatten(r),flatten(p)))
+	r,p = a[:,0],a[:,1]
+	idx = where(r)
+	r,p = r[idx],p[idx]
+	F = (2*p*r/(p+r)).mean()
+	return F
+
+def evaluate_classifier(fname='saved_data.pickle', use_pca=True, null_clf=False, eps=0.0):
+	"""
+	Gaussian classifier for non-tuned / autotuned equal-temparement magnitudes
+	"""
+	with open(fname,'rb') as f:
+		data = pickle.load(f)
+	a0 = array([[dd['nontuned_mags'] for dd in d] for d in data[1::2]])
+	a1 = array([[dd['autotuned_mags'] for dd in d] for d in data[1::2]])
+	P,TP,FN,FP,TN,PR,RE = [],[],[],[],[],[],[]
+	for song in arange(len(a0)):
+		# per-song precision / recall
+		idx = setdiff1d(arange(len(a0)),[song])
+		train0=dB(array([a for a in flatten(a0[idx])]))
+		train1=dB(array([a for a in flatten(a1[idx])]))
+		test0=dB(array([a for a in flatten(a0[song])]))
+		test1=dB(array([a for a in flatten(a1[song])]))
+		if use_pca:
+			u,s,v = svd(array([train0,train1]).T,0)
+			train0 = u[:,0]
+			train1 = u[:,1]
+			test = array([test0,test1]).T
+			test = dot(dot(test,v.T),diag(1./s))
+			test0 = test[:,0]
+			test1 = test[:,1]
+		m0,v0 = train0.mean(),train0.var()
+		m1,v1 = train1.mean(),train1.var()		
+		P.append(len(test0))
+		t1w0,t1w1 = log(eval_gauss(test1,m0,v0)+eps), log(eval_gauss(test1,m1,v1)+eps)
+		t0w0,t0w1 = log(eval_gauss(test0,m0,v0)+eps), log(eval_gauss(test0,m1,v1)+eps)
+		TP.append(sum(t1w1>t1w0))
+		FN.append(sum(t1w1<=t1w0))
+		FP.append(sum(t0w1>t0w0))
+		TN.append(sum(t0w1<=t0w0))
+		prec,rec = calc_precrec(t0w0,t0w1,t1w0,t1w1,null_clf)
+		PR.append(prec)
+		RE.append(rec)
+	F = calc_fscore(RE,PR)
+	return {'P':array(P),'TP':array(TP),'FN':array(FN),'FP':array(FP),'TN':array(TN),'PR':PR,'RE':RE,'F':F}
+
+def plot_evaluation(stats, N=10.):
+	figure()
+	PR = array(zip(flatten(stats['RE']),flatten(stats['PR'])))
+	PR[:,0] = fix(PR[:,0]*N)/float(N) # divide recall into deciles
+	precrec = []
+	for re in unique(PR[:,0]):
+		p = PR[:,1][where(PR[:,0]==re)]
+		precrec.append((re,p.mean(),p.std()/sqrt(len(p))))
+		errorbar(x=re,y=p.mean(),yerr=p.std()/sqrt(len(p)),color='b')
+		plot(re,p.mean(),'bx')
+	precrec=array(precrec)
+	plot(precrec[:,0],precrec[:,1],'b--')
+	axis([-0.05,1.05,0,1.05])
+	grid()
+	title('ROC autotuned/non-tuned classifier',fontsize=20)
+	xlabel('Recall (standardized deciles)', fontsize=16)
+	ylabel('Precision', fontsize=16)
+	text(.85,.95,'F1=%.2f'%stats['F'],fontsize=16)
+	return precrec
