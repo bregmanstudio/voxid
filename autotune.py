@@ -275,7 +275,7 @@ def eval_gauss(x, mu,sigma2):
 	"""
 	evaluate point x on 1d gaussian with mean mu and variance sigma2
 	"""
-	return 1/sqrt(2*pi*sigma2)*exp(-0.5*(x-mu)/sigma2)
+	return 1.0/sqrt(2*pi*sigma2)*exp(-0.5*(x-mu)/sigma2)
 
 def dB(x):
 	return 20*log10(x)
@@ -317,7 +317,7 @@ def calc_fscore(r,p):
 	F = (2*p*r/(p+r)).mean()
 	return F
 
-def evaluate_classifier(fname='saved_data.pickle', use_pca=True, null_clf=False, eps=0.0):
+def evaluate_classifier(fname='saved_data.pickle', use_pca=True, null_clf=False, eps=finfo(float).eps, clip=-100):
 	"""
 	Gaussian classifier for non-tuned / autotuned equal-temparement magnitudes
 	"""
@@ -326,6 +326,7 @@ def evaluate_classifier(fname='saved_data.pickle', use_pca=True, null_clf=False,
 	a0 = array([[dd['nontuned_mags'] for dd in d] for d in data[1::2]])
 	a1 = array([[dd['autotuned_mags'] for dd in d] for d in data[1::2]])
 	P,TP,FN,FP,TN,PR,RE = [],[],[],[],[],[],[]
+	T0W0,T0W1,T1W0,T1W1 = [],[],[],[]
 	for song in arange(len(a0)):
 		# per-song precision / recall
 		idx = setdiff1d(arange(len(a0)),[song])
@@ -342,10 +343,19 @@ def evaluate_classifier(fname='saved_data.pickle', use_pca=True, null_clf=False,
 			test0 = test[:,0]
 			test1 = test[:,1]
 		m0,v0 = train0.mean(),train0.var()
-		m1,v1 = train1.mean(),train1.var()		
+		m1,v1 = train1.mean(),train1.var()
 		P.append(len(test0))
 		t1w0,t1w1 = log(eval_gauss(test1,m0,v0)+eps), log(eval_gauss(test1,m1,v1)+eps)
 		t0w0,t0w1 = log(eval_gauss(test0,m0,v0)+eps), log(eval_gauss(test0,m1,v1)+eps)
+		if clip!=0:
+			t1w0[t1w0<clip]=clip
+			t1w1[t1w1<clip]=clip
+			t0w0[t0w0<clip]=clip
+			t0w1[t0w1<clip]=clip
+		T0W0.append(t0w0)
+		T0W1.append(t0w1)
+		T1W0.append(t1w0)
+		T1W1.append(t1w1)
 		TP.append(sum(t1w1>t1w0))
 		FN.append(sum(t1w1<=t1w0))
 		FP.append(sum(t0w1>t0w0))
@@ -354,7 +364,8 @@ def evaluate_classifier(fname='saved_data.pickle', use_pca=True, null_clf=False,
 		PR.append(prec)
 		RE.append(rec)
 	F = calc_fscore(RE,PR)
-	return {'P':array(P),'TP':array(TP),'FN':array(FN),'FP':array(FP),'TN':array(TN),'PR':PR,'RE':RE,'F':F}
+	return {'P':array(P),'TP':array(TP),'FN':array(FN),'FP':array(FP),'TN':array(TN),
+		'PR':PR,'RE':RE,'F':F, 'T0W0':T0W0,'T0W1':T0W1,'T1W0':T1W0,'T1W1':T1W1}
 
 def plot_evaluation(stats, N=10.):
 	figure()
